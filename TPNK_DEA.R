@@ -1,0 +1,195 @@
+#chooseCRANmirror()
+rm(list=ls())  # To clear all
+graphics.off() # To close all graphics
+library(MASS)
+library(Benchmarking)
+library(maxLik)
+library(xlsx)
+
+# Using the right database
+
+##bazthes=read.xlsx("C:/Users/nkponjdo/Documents/DEANK_IFP/2012_DEA2stage.xls",1)
+bazthes=read.xlsx("S:/fedotova/R folder/Data_DEA.xls",2)
+
+# Inputs and output maxtrix
+
+n=length(bazthes$Prod)
+vec1<- c(bazthes$Aluminap,bazthes$Laborp,bazthes$Powerp,bazthes$Anodep,bazthes$Bathmatp)
+vec2 <- c(bazthes$Alumina,bazthes$Labor,bazthes$Power,bazthes$Anode,bazthes$Bathmat)
+X<- matrix(vec2,n, ncol=5)
+Y=matrix(bazthes$Prod,n,1) 
+W <- matrix(vec1,n, ncol=5)
+p=ncol(X);
+q=ncol(Y);
+
+
+
+
+## 1 - fIRST STAGE / technical efficiency  AND  allocative efficiency WITH benchmarking package
+
+# CRS Model
+
+ETEcrs <- dea(X, Y, RTS="crs",ORIENTATION="in", TRANSPOSE=FALSE, SLACK=TRUE)
+TEcrs=eff(ETEcrs)
+summary(TEcrs) #  descriptive Statistics
+
+# VRS Model
+
+ETEvrs <- dea(X, Y, RTS="vrs",ORIENTATION="in", TRANSPOSE=FALSE, SLACK=TRUE)
+TEvrs=eff(ETEvrs)
+summary(TEvrs)
+
+InpuTargetf = X*TEvrs
+InputSlackf = ETEvrs$sx
+
+Slackf = as.data.frame((ETEvrs$sx/X)*100)
+Slackf2 = as.data.frame((X-ETEvrs$sx)/X)*100
+
+Slackf$sAlumina = Slackf$sx1
+Slackf$sLabor= Slackf$sx2
+Slackf$sPower = Slackf$sx3
+Slackf$sAnode = Slackf$sx4
+Slackf$sBathmat= Slackf$sx5
+
+csres = cbind(TEcrs, TEvrs, Slackf)
+
+boxplot(Slackf[,6:10], data=bazthes, xlab="Factors of production", ylab="% Inputs Excess (2012)", col= c("pink", "orange", "lightblue", "skyblue2", "slateblue2"))
+boxplot(InpuTargetf[,2], X[,2])
+
+
+
+# VRS: DRS and IRS
+
+ETEdrs <- dea(X=X, Y, RTS="drs",ORIENTATION="in", TRANSPOSE=FALSE)
+TEdrs=eff(ETEdrs)
+
+ETEirs <- dea(X=X, Y, RTS="irs",ORIENTATION="in", TRANSPOSE=FALSE)
+TEirs=eff(ETEirs)
+
+# Scale efficiency 
+
+SE=eff(ETEcrs)/eff(ETEvrs)
+
+#super efficiency
+
+SPEvrs <- sdea(X, Y, RTS="vrs",ORIENTATION="in", TRANSPOSE=FALSE)
+ESPEvrs = eff(SPEvrs)
+
+### Bootstrap return to scale
+# The bootstrap and calculate CRS and VRS under the assumption that
+  # the true technology is CRS (the null hypothesis) and such that the
+  # results correponds to the case where CRS and VRS are calculated for
+  # the same reference set of firms; to make this happen we set the
+  # random number generator to the same state before the calls.
+ #To get the an initial value for the random number generating process
+  # we save its state (seed)
+#S <- round(sum(ETEcrs)/sum(ETEvrs), 4)
+S <- round(sum(TEcrs)/sum(TEvrs), 4)
+save.seed <- sample.int(1e9,1)
+set.seed(save.seed)
+bc <- dea.boot(X=X,Y, NREP=1000,ORIENTATION="in", RTS="crs")
+  set.seed(save.seed)
+bv <- dea.boot(X=X,Y, NREP=1000, ORIENTATION="in", RTS="vrs")
+  # Calculate the statistic for each bootstrap replica
+  
+bs <- round(colSums(bc$boot)/colSums(bv$boot), 4)
+  # The critical value for the test (default size \code{alpha} of test is 5%)
+  critValue(bs, alpha=.1)
+S
+  # Accept the hypothesis at 5% level?
+  critValue(bs, alpha=.1) <= S
+  # The probability of observering a smaller value of S when the
+  # hypothesis is true; the p--value.
+  typeIerror(S, bs)
+  # Accept the hypothesis at size level 5%?
+  typeIerror(S, bs) >= .1
+
+# Bias correction for Farrell measures cRS
+
+#bc <- dea.boot(X,Y, NREP=2000,ORIENTATION="in", RTS="crs")
+TEest = bv$eff
+Far_BC = bv$eff.bc
+biaiseff = bv$bias
+sigeff = sqrt(bv$var)
+FarCI = bv$conf.int
+c = abs(biaiseff) > (sigeff/4)
+cbind(TEest,Far_BC, biaiseff, sigeff,FarCI)
+
+
+#ggggggggggggg: traditional cost efficiency
+
+xopt <- cost.opt(X,Y,W,RTS="vrs", TRANSPOSE=FALSE)
+cobs <- X*W #ou X %*% t(W) si c'était un prix pour tout le monde
+tcobs=round(rowSums(cobs), 4)
+# tcobs=cbind(cobs, rowSums(cobs))
+copt <- xopt$x*W #xopt$x %*% t(W)
+#tcopt=cbind(copt, rowSums(copt))
+InpuTarget = X*TEvrs
+Inputred = X - xopt$x
+Inputredp = ((X - xopt$x)/X)*100
+tcopt= round(rowSums(copt), 4)
+sXP= round(rowSums(X), 4)
+InputSlackc = X - InpuTarget
+InputSlackcp = ((X - InpuTarget)/X)*100
+Inputredc= cobs - copt
+Inputredcp = ((cobs - copt)/cobs )*100
+
+
+# cost efficiency
+CE<- round(tcopt/tcobs, 4)
+# allocaltive efficiency
+AE <- round (CE/TEvrs, 4)
+
+
+
+# dataframe with all score efficiency
+restgp=round(cbind(TEcrs,TEvrs,TEirs,TEdrs,SE,TEest,Far_BC, biaiseff, sigeff,FarCI, ESPEvrs,AE,CE,InpuTarget, Inputred, Inputredcp, tcobs, tcopt),4)
+print (restgp)
+
+## export results
+write.table(restgp, file="S:/fedotova/R folder/result12.csv", sep=",", col.names=NA, qmethod = "double")
+#write.table(restgp, file="C:/Users/nkponjdo/Documents/DEANK_IFP/result09.csv", sep=",", col.names=NA, qmethod = "double")
+
+
+
+#2-Estimation second stage with Benchmarking
+
+#bazthes=read.xlsx("C:/Users/nkponjdo/Documents/DEANK_IFP/2012_DEA2stage.xls",1)
+
+bazthes$logage = log(bazthes$Age) # n'est pas bon si age = 0
+bazthes$logageint = bazthes$logage * bazthes$International
+#bazthes$tailleint = bazthes$Taille1 * bazthes$International
+bazthes$CE=CE
+bazthes$AE=AE
+bazthes$TEvrs=TEvrs
+
+vec3 <- c(bazthes$Taille2,bazthes$logage,bazthes$International,bazthes$logageint,bazthes$InovTech,bazthes$TxCh_ppa)#
+
+Z<- matrix(vec4,n, ncol=6)
+
+# analyze by technology
+
+boxplot(CE~bazthes$Techn,xlab="CE in 2012", ylab="Efficiency score", col= c("pink", "lightblue", "skyblue2", "slateblue2", "blue", "blue", "orange"))
+
+boxplot(TEvrs~bazthes$Techn,xlab="TEVRS in 2012", ylab="Efficiency score", col= c("pink", "lightblue", "skyblue2", "slateblue2", "blue", "blue", "orange"))
+
+
+ # 2-a estimation with truncreg
+    library(truncreg)
+    library(maxLik) 
+    truncResult <- truncreg(CE~ logage + International + InovTech + TxCh_ppa, data = bazthes, point =0, direction = "left")
+    summary(truncResult)
+    
+    #2 b-Estimation second stage with censreg
+    #library(censReg)
+    #library(maxLik) 
+    # estsusResult <- censReg(CE~ logage + International + InovTech + TxCh_ppa, left=0, data = bazthes)
+    # print(estsusResult)
+    #summary(margEff( estsusResult ) )
+    #coef( summary( estsusResult) )
+    # margEff( estsusResult ) 
+    # coef( estsusResult)
+    #coef( estsusResult, logSigma = FALSE )
+    #vcov( estsusResult)
+    #vcov( estsusResult, logSigma = FALSE )
+    #logLik( estsusResult )
